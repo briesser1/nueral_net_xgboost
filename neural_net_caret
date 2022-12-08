@@ -1,0 +1,142 @@
+#running the neuralnet with parameter tunning in caret
+library(tidyverse)
+library(nnet)
+library(caret)
+library(doSNOW)
+
+
+## ============================================================================================##
+# train the neural net. With Caret
+## ============================================================================================##
+##load train data
+BH_train <- read_rds(here::here("create_dataset", "BH_train_regression_Role.rds"))
+BH_train <- BH_train %>%  
+  mutate(order = sample(nrow(BH_train))) %>%  
+  arrange(order) %>%  
+  select(-order)
+
+# BH_train <- BH_train %>% sample_frac(.005)
+
+
+
+
+# cl <- makeCluster(8, type = "SOCK")
+# registerDoSNOW(cl)
+# 
+# nnetGrid <-  expand.grid(size = seq(from = 1, to = 58, by = 2),
+#                          decay = seq(from = 0.1, to = 1, by = 0.2))
+# 
+# nnetFit <- train(Role ~ .,
+#                  data = BH_train,
+#                  method = "nnet",
+#                  tuneGrid = nnetGrid,
+#                  trace = FALSE)
+# 
+# 
+# stopCluster(cl)
+
+#examine caret's processing results. 
+
+# Make predictions on the test set using 
+# found optimal hyperparameter values.
+BH_test <- read_rds(here::here("create_dataset", "BH_test_regression_Role.rds")) 
+REF_ID <- read_rds(here::here("create_dataset", "BH_test_id_lookup_regression_Role.rds")) 
+
+
+preds2 <- predict(nnetFit, BH_test[2:60])
+
+
+# unnormalize <- function(x) { 
+#   return(
+#     x * (24 -1) +1
+#   )                  }
+
+unnormalize <- function(x) {
+  x*(22-1) + 1
+}
+
+
+evaluation_table <- data.frame(REF_ID$REF_ID, preds2, REF_ID$Role)
+evaluation_table <- evaluation_table %>%  
+  rename(REF_ID = REF_ID.REF_ID, 
+         prediction = preds2, 
+         acctual = REF_ID.Role) %>%  
+  group_by(REF_ID) %>%  
+  mutate(prediction = unnormalize(prediction)) %>%  
+  summarize(mean_prediction = mean(prediction), 
+            acctual = mean(acctual)) %>% 
+  mutate(outcome = ifelse(acctual > 13 & mean_prediction > 13 |
+                            acctual <= 13 & mean_prediction <= 13,
+                             "Correct", 
+                             "Incorrect")) %>%  
+  mutate(higher = ifelse(acctual > 13, "Higher", "Lower"))
+
+
+library(ggthemes)
+ggplot(evaluation_table, aes(x = mean_prediction, y = acctual, colour = outcome)) + geom_point(size = 5) + 
+  geom_hline(yintercept =  13) + geom_vline(xintercept =   13) + 
+  theme_light() + 
+  labs(title = "Acctual v. Predicted ROLES scores") + 
+  theme(legend.position = "bottom") +
+  scale_colour_manual(values= wesanderson::wes_palette("GrandBudapest1"))
+
+
+eval_summary <- evaluation_table %>%  
+  group_by(higher, outcome) %>%  
+  summarize(n = n()) %>%  
+  mutate(per = scales::percent(n/sum(n)))  %>% 
+  mutate(pandn = paste(n, " (", per, ")", sep = "") )%>%  
+  select(-n, -per) %>%  
+  spread(outcome, value = "pandn")
+
+eval_summary_total <- evaluation_table %>%  
+  group_by(outcome) %>%  
+  summarize(n = n()) %>%  
+  mutate(per = scales::percent(n/sum(n)))  %>% 
+  mutate(pandn = paste(n, " (", per, ")", sep = "") )%>%  
+  select(-n, -per) %>%  
+  spread(outcome, value = "pandn")
+  
+
+
+evaluation_table2 <- tibble(REF_ID = REF_ID$REF_ID,
+                            prediction = unnormalize(preds2),
+                            acctual = unnormalize(BH_test$Role)) %>%  
+  mutate(outcome = ifelse(acctual > 13 & prediction > 13 |
+                            acctual <= 13 & prediction <= 13,
+                          "Correct", 
+                          "Incorrect")) %>%  
+  mutate(higher = ifelse(acctual > 13, "Higher", "Lower"))
+
+
+cor_not_agr <- cor(evaluation_table$acctual, evaluation_table$mean_prediction)
+cor_agrigated <- cor(evaluation_table2$acctual, evaluation_table2$prediction)
+correlation_summaries <- data.frame(cor_not_agr, cor_agrigated)
+
+
+ggplot(evaluation_table2, aes(x = prediction, y = acctual)) + 
+  geom_jitter(aes(colour = outcome), alpha = .05) + 
+  geom_hline(yintercept =  13) + 
+  geom_vline(xintercept =   13) + 
+  theme_light() + 
+  labs(title = "Acctual v. Predicted ROLES scores") + 
+  theme(legend.position = "none") +
+  scale_colour_manual(values= wesanderson::wes_palette("GrandBudapest1"))
+
+eval_summary2 <- evaluation_table2 %>%  
+  group_by(higher, outcome) %>%  
+  summarize(n = n()) %>%  
+  mutate(per = scales::percent(n/sum(n)))  %>% 
+  mutate(pandn = paste(n, " (", per, ")", sep = "") )%>%  
+  select(-n, -per) %>%  
+  spread(outcome, value = "pandn")
+
+write_rds(nnetFit, here::here("neuralnet_caret_regression_Role", "nnet_model_25000Rows.rds"))
+write_rds(evaluation_table, here::here("neuralnet_caret_regression_Role", "evaluationtable.rds"))
+write_rds(evaluation_table2, here::here("neuralnet_caret_regression_Role", "evaluationtable2.rds"))
+write_rds(eval_summary, here::here("neuralnet_caret_regression_Role", "eval_summary.rds"))
+write_rds(eval_summary2, here::here("neuralnet_caret_regression_Role", "eval_summary2.rds"))
+write_rds(correlation_summaries, here::here("neuralnet_caret_regression_Role", "correlation_summaries.rds"))
+  
+  
+  
